@@ -1,0 +1,78 @@
+% shift predictor function 
+% requirements:
+%   S1Neurons (nonscalar structure)
+%   M1Neurons (nonscalar structure)
+%   cEvent = current event in times;
+%   xcorrel script (jimmy)   
+%
+% outputs:
+%   Shifted.
+
+function [Shifted] = lxHolyShift(S1Neurons, M1Neurons, cEvent) 
+
+MinTime = .15; % Distance to the movement in seconds 
+binsize = 1; % in MS
+timewindow = .3;
+preevent = 0.15; %offset
+nBins = 300;
+allA1Spikes = 0;
+
+eTimes = cEvent;
+nTrigger = length(eTimes);
+
+%create random permutations of your event times 
+for iTrigger = 1:nTrigger
+    eTimesRand(iTrigger,:) = eTimes(randperm(length(eTimes))); 
+end 
+
+counting = 1; 
+for N1 = 1:length(S1Neurons)
+    s1neu = S1Neurons(N1).times;
+    cSpikesA1 = []; %spikes in area1 (S1) 
+    for cTrigger = 1:nTrigger
+        cSpikesA1 = [cSpikesA1; s1neu(abs(s1neu-eTimes(cTrigger))<MinTime)];
+    end 
+
+    cSpikesA1s = []; %shifted spikes in area1
+    for iTrigger = 1:nTrigger
+        for cTrigger = 1:nTrigger
+            tShiftSeconds(cTrigger) = eTimes(cTrigger) - eTimesRand(iTrigger,cTrigger);
+            if iTrigger ~= cTrigger
+            cSpikesA1s = [cSpikesA1s; cSpikesA1(abs(cSpikesA1-eTimesRand(iTrigger,cTrigger)) < MinTime)+tShiftSeconds(cTrigger)];
+            end
+        end
+    end
+    
+    for N2 = 1:length(M1Neurons)
+        m1neu = M1Neurons(N2).times;
+        cSpikesA2 = []; %spikes in area2 (M1)
+        for cTrigger = 1:nTrigger
+            cSpikesA2 = [cSpikesA2; m1neu(abs(m1neu-eTimes(cTrigger))<MinTime)];
+        end 
+
+        eDiffs = xcorrel(cSpikesA1, cSpikesA2, binsize, timewindow, preevent);
+        sheDiffs = xcorrel(cSpikesA1s, cSpikesA2, binsize, timewindow, preevent);
+        eventHist(counting,:) = eDiffs.count; 
+        eventHistShift(counting,:) = sheDiffs.count/(nTrigger-1);
+        %eventHist(N1, N2, :) = eDiffs.count;
+        %eventHistShift(N1, N2, :) = sheDiffs.count/(eTotes-1);
+        counting = counting+1;
+        allA1Spikes = length(cSpikesA1) + allA1Spikes; 
+    end 
+end 
+
+%do the shift subtraction
+sseventHist = smooth(sum(eventHist)); %perievent histogram
+sseventHistShift = smooth(sum(eventHistShift)); %shift predictor
+shifted = sseventHist-sseventHistShift; %shiftedresult
+
+%generate confidence interval
+confidenceInterval = 2.576*sqrt(sseventHistShift);
+
+Shifted.rawPETH = sseventHist;
+Shifted.ShiftPredictor = sseventHistShift;
+Shifted.ShiftedResult = shifted;
+Shifted.CI = confidenceInterval; 
+Shifted.TimePerBin = allA1Spikes*(binsize/1000); %
+Shifted.ShiftPredictorNorm = Shifted.ShiftPredictor/Shifted.TimePerBin; 
+Shifted.ShiftedResultNorm = Shifted.ShiftedResult/Shifted.TimePerBin;
